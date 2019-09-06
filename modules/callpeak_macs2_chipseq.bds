@@ -1,0 +1,212 @@
+#!/usr/bin/env bds
+#vim: syntax=java
+
+include "species.bds"
+include "module_template.bds"
+
+
+help == callpeak macs2 settings (requirements: -chrsz -gensz)
+gensz 		:= ""		help Genome size; hs for human, mm for mouse.
+wt_macs2	:= "23h"	help Walltime for MACS2 (default: 23h, 23:00:00).
+mem_macs2	:= "15G" 	help Max. memory for MACS2 (default: 15G).
+
+pval_thresh_macs2 := 0.01 	help --pvalue for macs2 callpeak (https://github.com/taoliu/MACS#-p--pvalue, default: 0.01)
+keep_dup_macs2    := "all"	help --keep-dup for macs2 callpeak (https://github.com/taoliu/MACS#--keep-dup, default: all).
+extsize_macs2 	  := -1 	help --extsize for macs2 callpeak (https://github.com/taoliu/MACS#--extsize). Use -1 to get from upstream cross-corr. analysis (default: -1).
+shift_macs2 	  := 0		help --shift for macs2 callpeak (https://github.com/taoliu/MACS#--shift, default: 0).
+cap_num_peak_macs2 := "500K"	help Cap number of peaks by taking top N peaks for MACS2 (default: 500K).
+extra_param_macs2 := ""		help Extra parameters for macs2 callpeak.
+
+grp_color_macs2	:= "lightgreen"
+
+
+init_callpeak_macs2()
+
+
+void init_callpeak_macs2() {
+
+	gensz		= get_conf_val( gensz, 		["gensz"])
+	wt_macs2 	= get_conf_val( wt_macs2, 	["wt_macs2"] )
+	mem_macs2	= get_conf_val( mem_macs2, 	["mem_macs2"] )
+	
+	pval_thresh_macs2	= get_conf_val_real( pval_thresh_macs2, ["pval_thresh_macs2"] )
+	keep_dup_macs2		= get_conf_val( keep_dup_macs2, 	["keep_dup_macs2"] )
+	extsize_macs2		= get_conf_val_int( extsize_macs2, 	["extsize_macs2"] )
+	shift_macs2		= get_conf_val_int( shift_macs2, 	["shift_macs2"] )
+	cap_num_peak_macs2	= get_conf_val( cap_num_peak_macs2, ["cap_num_peak_macs2"] )
+	extra_param_macs2	= get_conf_val( extra_param_macs2, 	["extra_param_macs2"] )
+
+	print("\n\n== callpeak macs2 settings\n")
+	print( "Genome size (hs,mm)\t\t\t: $gensz\n" )
+	print( "Walltime (macs2)\t\t\t: $wt_macs2\n")
+	print( "Max. memory (macs2)\t\t\t: $mem_macs2\n")
+	print( "P-value cutoff (macs2 callpeak)\t\t: $pval_thresh_macs2\n")
+	print( "--keep-dup (macs2 callpeak)\t\t\t: $keep_dup_macs2\n")
+	print( "--extsize (macs2 callpeak); if -1 then use frag. len.\t: $extsize_macs2\n")
+	print( "--shift (macs2 callpeak)\t\t\t: $shift_macs2\n")
+	print( "Cap number of peaks (macs2)\t: $cap_num_peak_macs2\n")
+	print( "Extra parameters for macs2 callpeak\t\t: $extra_param_macs2\n")
+}
+
+void chk_callpeak_macs2() {
+
+	if ( gensz == "" ) error("Genome size (-gensz) must be defined! (mm for mouse, hs for human)")
+	if ( !path_exists( chrsz ) ) error("Chromosome size file (-chrsz) is missing! (file: $chrsz)")
+}
+
+string[] macs2_chipseq_npeak_and_signal( string tag, string ctl_tag, string frag_len, bool make_sig, \
+		string peak_o_dir, string sig_o_dir, string group ) {
+
+	prefix 		:= (ctl_tag != "") ? 	("$peak_o_dir/" + make_x_basename_wo_gz( tag, ctl_tag, "" ) ) \
+						: replace_dir( rm_ext( tag, "tagAlign" ), peak_o_dir )
+	prefix_sig 	:= replace_dir( prefix, sig_o_dir )
+
+	npeakfile 	:= "$prefix.pval$pval_thresh_macs2.$cap_num_peak_macs2.narrowPeak.gz"
+	fc_bedgraph 	:= "$prefix.fc.signal.bedgraph"
+	fc_bedgraph_srt	:= "$prefix.fc.signal.srt.bedgraph"
+	fc_bigwig 	:= "$prefix_sig.fc.signal.bw"
+	pval_bedgraph 	:= "$prefix.pval.signal.bedgraph"
+	pval_bedgraph_srt := "$prefix.pval.signal.srt.bedgraph"
+	pval_bigwig 	:= "$prefix_sig.pval.signal.bw"
+	prefix_basename	:= get_basename( prefix )
+	extsize_param 	:= extsize_macs2 > -1 ? "--extsize $extsize_macs2" : "--extsize $frag_len"
+	// macs2 params with or w/o control
+ 	ctl 	:= (ctl_tag != "") ? "-c $ctl_tag" : ""
+	sval_line := (ctl_tag != "") ?	"controlReads=$(zcat $ctl_tag | wc -l | awk '{printf \"%f\", $1/1000000}'); sval=$(echo \"${chipReads} ${controlReads}\" | awk '$1>$2{printf \"%f\",$2} $1<=$2{printf \"%f\",$1}')" : \
+					"sval=$(echo \"${chipReads}\" | awk '{printf \"%f\",$1}')"
+	int_cap_num_peak_macs2 := parse_number( cap_num_peak_macs2 )
+
+	in 	:= (ctl_tag != "") ? [ tag, ctl_tag ] : [ tag ]
+	out 	:= make_sig ? [ npeakfile, fc_bigwig, pval_bigwig ] : [ npeakfile ]
+
+	taskName:= "macs2 n/s " + group
+	mem := get_res_mem(mem_macs2,1);	timeout := get_res_wt(wt_macs2)
+
+	wait_par( cpus )
+
+	tid := task( out<-in ) {
+
+		sys $shcmd_init
+		sys export LC_COLLATE=C
+		
+		//==========================================
+		//# Generate narrow peaks and preliminary signal tracks
+		//============================================
+		sys macs2 callpeak -t $tag $ctl -f BED -n $peak_o_dir/$prefix_basename -g $gensz -p $pval_thresh_macs2 --nomodel --shift $shift_macs2 $extsize_param --keep-dup $keep_dup_macs2 -B --SPMR $extra_param_macs2
+
+		//# Sort by Col8 in descending order and replace long peak names in Column 4 with Peak_<peakRank>
+		sys sort -k 8gr,8gr "$prefix"_peaks.narrowPeak | awk 'BEGIN{OFS="\t"}{$4="Peak_"NR ; print $0}' > $npeakfile.tmp
+		sys head -n $cap_num_peak_macs2 $npeakfile.tmp | gzip -nc > $npeakfile
+		sys rm -f $npeakfile.tmp
+
+		//# remove additional files
+		sys rm -f "$prefix"_peaks.xls \
+			"$prefix"_peaks.narrowPeak \
+			"$prefix"_summits.bed
+
+		sys if [[ $make_sig == "false" ]]; then \
+			rm -f "$prefix"_treat_pileup.bdg "$prefix"_control_lambda.bdg; \
+			$shcmd_finalize; \
+			exit; \
+		fi
+
+		//===========================================
+		//# For Fold enrichment signal tracks
+		//============================================
+		//# This file is a tab delimited file with 2 columns Col1 (chromosome name), Col2 (chromosome size in bp).
+		sys macs2 bdgcmp -t "$prefix"_treat_pileup.bdg -c "$prefix"_control_lambda.bdg --outdir $peak_o_dir -o "$prefix_basename"_FE.bdg -m FE
+
+		//# Remove coordinates outside chromosome sizes (stupid MACS2 bug)
+		sys slopBed -i "$prefix"_FE.bdg -g $chrsz -b 0 |   awk '{if ($3 != -1) print $0}' |  bedClip stdin $chrsz $fc_bedgraph
+		sys rm -f "$prefix"_FE.bdg
+		
+		//# Convert bedgraph to bigwig
+		sys sort -S 4G -k1,1 -k2,2n $fc_bedgraph > $fc_bedgraph_srt
+		sys bedGraphToBigWig $fc_bedgraph_srt $chrsz $fc_bigwig
+		sys rm -f $fc_bedgraph $fc_bedgraph_srt
+
+		//===========================================
+		//# For -log10(p-value) signal tracks
+		//============================================
+		
+		sys chipReads=$(zcat $tag | wc -l | awk '{printf "%f", $1/1000000}')
+		//# Compute sval = min(no. of reads in ChIP, no. of reads in control) / 1,000,000
+		sys $sval_line
+
+		sys macs2 bdgcmp -t "$prefix"_treat_pileup.bdg -c "$prefix"_control_lambda.bdg --outdir $peak_o_dir -o "$prefix_basename"_ppois.bdg -m ppois -S "${sval}"
+
+		//# Remove coordinates outside chromosome sizes (stupid MACS2 bug)
+		sys slopBed -i "$prefix"_ppois.bdg -g $chrsz -b 0 |   awk '{if ($3 != -1) print $0}' |  bedClip stdin $chrsz $peak_o_dir/$prefix_basename.pval.signal.bedgraph
+		sys rm -rf "$prefix"_ppois.bdg
+		
+		//# Convert bedgraph to bigwig
+		sys sort -S 4G -k1,1 -k2,2n $pval_bedgraph > $pval_bedgraph_srt
+		sys bedGraphToBigWig $pval_bedgraph_srt $chrsz $pval_bigwig
+		sys rm -f $pval_bedgraph $pval_bedgraph_srt
+
+		sys rm -f "$prefix"_treat_pileup.bdg "$prefix"_control_lambda.bdg
+
+		sys $shcmd_finalize
+	}
+
+	register_par( tid, cpus )
+
+	add_task_to_graph( in, out, group, "MACS2", grp_color_macs2 )
+
+	return out
+}
+
+string[] macs2_chipseq_gpeak_and_bpeak( string tag, string ctl_tag, string frag_len, \
+		string peak_o_dir, string group ) {
+
+	prefix 		:= (ctl_tag != "") ? 	("$peak_o_dir/" + make_x_basename_wo_gz( tag, ctl_tag, "" ) ) \
+						: replace_dir( rm_ext( tag, "tagAlign" ), peak_o_dir )
+	bpeakfile 	:= "$prefix.$pval_thresh_macs2.$cap_num_peak_macs2.broadPeak.gz"
+	gpeakfile 	:= "$prefix.$pval_thresh_macs2.$cap_num_peak_macs2.gappedPeak.gz"
+	extsize_param 	:= extsize_macs2 > -1 ? "--extsize $extsize_macs2" : "--extsize $frag_len"
+	// macs2 params with or w/o control
+	ctl 	:= (ctl_tag != "") ? "-c $ctl_tag" : ""
+	int_cap_num_peak_macs2 := parse_number( cap_num_peak_macs2 )
+
+	in 	:= (ctl_tag != "") ? [ tag, ctl_tag ] : [ tag ]
+	out 	:= [ gpeakfile, bpeakfile ]
+
+	taskName:= "macs2 g/b " + group
+	mem := get_res_mem(mem_macs2,1);	timeout := get_res_wt(wt_macs2)
+
+	wait_par( cpus )
+
+	tid := task( out<-in ) {
+
+		sys $shcmd_init
+		sys export LC_COLLATE=C
+
+		//===========================================
+		//# Generate Broad and Gapped Peaks
+		//============================================
+		// .tmp is to prevent file race condition with macs2_chipseq_npeak_and_signal
+		sys macs2 callpeak -t $tag $ctl -f BED -n $prefix.tmp \
+			-g $gensz -p $pval_thresh_macs2 --broad --nomodel --shift $shift_macs2 $extsize_param \
+			--keep-dup $keep_dup_macs2 $extra_param_macs2
+
+		//# Sort by Col8 (for broadPeak) or Col 14(for gappedPeak)  in descending order and replace long peak names in Column 4 with Peak_<peakRank>
+		sys sort -k 8gr,8gr "$prefix.tmp"_peaks.broadPeak | awk 'BEGIN{OFS="\t"}{$4="Peak_"NR ; print $0}' > $bpeakfile.tmp
+		sys head -n $cap_num_peak_macs2 $bpeakfile.tmp | gzip -nc > $bpeakfile
+		sys sort -k 14gr,14gr "$prefix.tmp"_peaks.gappedPeak | awk 'BEGIN{OFS="\t"}{$4="Peak_"NR ; print $0}' > $gpeakfile.tmp
+		sys head -n $cap_num_peak_macs2 $gpeakfile.tmp | gzip -nc > $gpeakfile
+
+		//# remove additional files
+		sys rm -f "$prefix.tmp"_peaks.xls \
+		  "$prefix.tmp"_peaks.broadPeak \
+		  "$prefix.tmp"_peaks.gappedPeak \
+		  "$prefix.tmp"_summits.bed
+
+		sys $shcmd_finalize
+	}
+
+	register_par( tid, cpus )
+
+	add_task_to_graph( in, out, group, "MACS2", grp_color_macs2 )
+
+	return out
+}

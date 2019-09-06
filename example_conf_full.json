@@ -1,0 +1,128 @@
+{
+	"screen" : "",
+	"dry_run" : false,
+	"type" : "TF",
+	"final_stage" : "idr",
+	"out_dir" : "out",
+	"title" : "",
+	"input_endedness" : {
+		"se" : false,
+		"pe" : false
+	},
+	"input_files" : {
+	},
+	"species" : {
+		"species" : "",
+		"species_file" : "",
+		"species_browser" : "",
+		"ref_fa" : "",
+		"chrsz" : "",
+		"blacklist" : "",
+		"gensz" : ""
+	},
+	"cluster" : {
+		"use_system" : "local",
+		"nice" : 0,
+		"retrial" : 0,
+		"q" : ""
+	},
+	"resource" : {
+		"nth" : 8,
+		"no_par" : false,
+		"wt" : "5h50m",
+		"memory" : "7G",
+		"unlimited_mem_wt" : false,
+		"wt_dedup" : "23h",
+		"mem_dedup" : "12G",
+		"mem_shuf" : "12G",
+		"wt_bwa" : "47h",
+		"mem_bwa" : "12G",
+		"wt_macs2" : "23h",
+		"mem_macs2" : "15G",
+		"wt_spp" : "47h",
+		"mem_spp" : "12G"
+	},
+	"alignment" : {
+		"aligner" : "bwa",
+		"bwa" : {
+			"param_bwa_aln" : "-q 5 -l 32 -k 2",
+			"bwa_idx" : ""
+		},
+		"filter" : {
+			"dup_marker" : "picard",
+			"anon_filt_bam" : false,
+			"mapq_thresh" : 30,
+			"rm_chr_from_tag" : "",
+			"no_dup_removal" : false
+		},
+		"subsample" : {
+			"subsample_chip" : "0",
+			"subsample_ctl" : "0"
+		}
+	},
+	"cross_corr_analysis" : {
+		"no_xcor" : false,
+		"subsample_xcor" : "15M",
+		"speak_xcor" : -1,
+		"extra_param_xcor" : ""
+	},
+	"callpeak" : {
+		"peak_caller" : "spp",
+		"ctl_depth_ratio" : 1.2,
+		"use_pooled_ctl" : false,
+		"true_rep" : false,
+		"no_pseudo_rep" : false,
+		"spp" : {
+			"npeak_spp" : 300000,
+			"max_ppsize_spp" : "",
+			"speak_spp" : -1,
+			"extra_param_spp" : ""
+		},
+		"macs2" : {
+			"pval_thresh_macs2" : 0.01,
+			"keep_dup_macs2" : "all",
+			"extsize_macs2" : -1,
+			"shift_macs2" : 0,
+			"extra_param_macs2" : ""
+		},
+		"idr" : {
+			"idr_suffix" : false,
+			"idr_rank" : "",
+			"idr_thresh" : 0.05
+		},
+		"naive_overlap" : {
+			"nonamecheck" : false
+		}
+	},
+	"signal_track" : {
+		"sig_trk_for_pooled_rep_only" : false
+	},
+	"bds_configuration" : {
+		"env" : "$script_dir/default.env"
+	},
+	"visualization" : {
+		"url_base" : ""
+	},
+	"ENCODE_accession" : {
+		"ENCODE_accession" : "",
+		"ENCODE_award_rfa" : "",
+		"ENCODE_assay_category" : "",
+		"ENCODE_assay_title" : "",
+		"ENCODE_award" : "",
+		"ENCODE_lab" : "",
+		"ENCODE_assembly" : "",
+		"ENCODE_alias_prefix" : "KLAB_PIPELINE"
+	},
+	"shell_environment" : {
+		"conda" : {
+			"conda_env" : "",
+			"conda_env_py3" : "",
+			"conda_bin_dir" : ""
+		},
+		"modules" : {
+			"mod" : "",
+			"shcmd" : "",
+			"addpath" : ""
+		}
+	}
+}

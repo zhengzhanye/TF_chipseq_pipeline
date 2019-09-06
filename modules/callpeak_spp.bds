@@ -1,0 +1,109 @@
+#!/usr/bin/env bds
+#vim: syntax=java
+
+include "species.bds"
+include "module_template.bds"
+
+
+help == callpeak spp settings
+cap_num_peak_spp 	:= "300K" help Cap number of peaks (-npeak= in run_spp.R) (default: 300000).
+max_ppsize_spp 	:= ""		help R stack size (R parameter --max-ppsize=; between 5000 and 5000000) for SPP.
+speak_spp 	:= -1 		help User-defined cross-corr. peak strandshift (-speak= in run_spp.R). Use -1 to get from upstream cross-corr. analysis (default: -1).
+extra_param_spp := ""		help Extra parameters for SPP (run_spp.R, peak calling only).
+wt_spp		:= "47h"	help Walltime for spp (default: 47h, 47:00:00).
+mem_spp		:= "12G" 	help Max. memory for spp (default: 12G).
+
+
+grp_color_spp		:= "skyblue"
+
+
+init_callpeak_spp()
+
+
+void init_callpeak_spp() {
+
+	cap_num_peak_spp = get_conf_val( cap_num_peak_spp,	["cap_num_peak_spp"] )
+	wt_spp 		= get_conf_val( wt_spp, 	["walltime_spp", "wt_spp", "timeout_spp"] )
+	mem_spp 	= get_conf_val( mem_spp, 	["memory_spp", "mem_spp"] )
+	max_ppsize_spp 	= get_conf_val( max_ppsize_spp, ["max_ppsize_spp"] )
+	speak_spp 	= get_conf_val_int( speak_spp, 	["speak_spp"] )
+	extra_param_spp = get_conf_val( extra_param_spp,["extra_param_spp"] )
+
+	print("\n\n== callpeak spp settings\n")
+	print( "Threshold for # peak\t\t: $cap_num_peak_spp\n")
+	print( "Walltime (spp)\t\t\t: $wt_spp\n")
+	print( "Max. memory (spp)\t\t: $mem_spp\n")
+	print( "Stack size for run_spp.R\t\t:$max_ppsize_spp\n")
+	print( "Use-defined cross-corr. peak strandshift; if -1, use frag. len.\t:$speak_spp\n")
+	print( "Extra parameters for run_spp.R\t:$extra_param_spp\n")
+}
+
+string[] spp( string tag, string ctl_tag, string frag_len, string o_dir, string group, int nth_spp ) {
+
+	if ( ctl_tag == "" ) error("missing file: control tagalign!")
+	if ( frag_len == "" ) error("missing parameter: fragment length!")
+
+	int_cap_num_peak_spp := parse_number( cap_num_peak_spp )
+
+	prefix_vs	:= "$o_dir/" + make_vs_basename_wo_gz( tag, ctl_tag, "" )
+	prefix_x	:= "$o_dir/" + make_x_basename_wo_gz( tag, ctl_tag, "" )
+	rpeakfile_vs 	:= "$prefix_vs.regionPeak.gz"	
+	rpeakfile 	:= "$prefix_x.regionPeak.gz"
+	filt_rpeakfile	:= "$prefix_x.filt.regionPeak.gz"
+	ccscore		:= "$prefix_x.ccscore"
+	pdf_tmp		:= replace_dir( rm_ext( tag, ["gz"] ), o_dir ) + ".pdf"
+	pdf 		:= "$prefix_x.pdf"
+        param_speak     := speak_spp > -1 ? "-speak=$speak_spp" : "-speak=$frag_len"
+	extra_param 	:= max_ppsize_spp ? "--max-ppsize=$max_ppsize_spp " : ""
+	if ( extra_param_spp ) extra_param += extra_param_spp
+
+	blacklist_exists := path_exists(blacklist)
+
+	in 	:= [ tag, ctl_tag ]
+	out 	:= [ rpeakfile, ccscore, pdf ]
+
+	taskName:= "spp " + group
+	cpus 	:= (nth_spp==1) ? -1 : nth_spp;	mem := get_res_mem(mem_spp,nth_spp);	timeout := get_res_wt(wt_spp)
+
+	wait_par( cpus )
+
+	tid := task( out<-in ) {
+
+		sys $shcmd_init
+
+		// # if phantompeakqualtools is an old version, use run_spp_nodups.R. new version has run_spp.R only		
+		sys if [ $(which run_spp_nodups.R 2> /dev/null | wc -l || echo) == "1" ]; then RUN_SPP=$(which run_spp_nodups.R); \
+		    else RUN_SPP=$(which run_spp.R); \
+		    fi
+
+		sys Rscript $extra_param ${RUN_SPP} -c=$tag -p=$nth_spp -i=$ctl_tag \
+			-npeak=$int_cap_num_peak_spp -odir=$o_dir $param_speak -savr -savp -rf -out=$ccscore
+
+		// Bug fix (we have scientific representation of chr coord., possible bug in run_spp.R?):
+		sys zcat $rpeakfile_vs | awk 'BEGIN{OFS="\t"}{ if ($2<0) $2=0; print $1,int($2),int($3),$4,$5,$6,$7,$8,$9,$10;}' | gzip -f -nc > $rpeakfile
+		
+		sys rm -f $rpeakfile_vs
+
+		sys mv $pdf_tmp $pdf
+
+		// if compressed output file is empty (spp error), remove it
+		sys if [ $(zcat $rpeakfile | wc -l ) == "0" ]; then rm -f $rpeakfile; fi
+
+		// if no rpeak file, do something to return non-zero exit code
+		sys if [ ! -f $rpeakfile ]; then error_in_spp_output_peak_does_not_exist; fi
+
+		sys if [[ $blacklist_exists == "true" ]]; then \
+			bedtools intersect -v -a <(zcat -f $rpeakfile) -b <(zcat -f $blacklist) \
+			| awk 'BEGIN{OFS="\t"} {if ($5>1000) $5=1000; print $0}' | grep -P 'chr[\dXY]+[ \t]' \
+			| gzip -nc > $filt_rpeakfile; \
+		fi
+
+		sys $shcmd_finalize
+	}
+
+	register_par( tid, cpus )
+
+	add_task_to_graph( in, out, group, "SPP", grp_color_spp )
+
+	return out
+}
